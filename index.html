@@ -449,9 +449,12 @@ function renderEvol(list){
 // ---------- Data (Google Sheets)
 const newId=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 async function api(body){
-  const r=await fetch(API_URL,{method:"POST",body:JSON.stringify({...body,pin})});
-  const j=await r.json();
-  if(j.error){const e=new Error(j.error);e.code=j.error;throw e}
+  const fail=(code,det)=>{const e=new Error(code);e.code=code;e.detalle=det||"";return e};
+  if(!navigator.onLine)throw fail("offline");
+  let r;try{r=await fetch(API_URL,{method:"POST",body:JSON.stringify({...body,pin})})}catch(x){throw fail("red")}
+  const t=await r.text();let j;
+  try{j=JSON.parse(t)}catch(x){throw fail("nojson",t.slice(0,120))}
+  if(j.error)throw fail(j.error,j.detalle);
   return j;
 }
 function norm(x){
@@ -470,12 +473,20 @@ async function load(){
     $("#pinScreen").hidden=true;notice("");refreshTeamSelects();render();
   }catch(e){
     if(e.code==="pin"){pin="";try{localStorage.removeItem("crm_pin")}catch(_){}showPin("Ese PIN no es correcto.")}
-    else notice("No hay conexión a internet. Se vuelve a intentar sola.");
+    else notice(errMsg(e));
   }
+}
+function errMsg(e){
+  const c=e&&e.code;
+  if(c==="offline")return "El teléfono no tiene internet. Se vuelve a intentar sola.";
+  if(c==="red")return "No se pudo conectar con la planilla (código: red). Revisá que la implementación de Apps Script tenga acceso “Cualquier usuario”.";
+  if(c==="nojson")return "La planilla no respondió como se esperaba (código: respuesta). Revisá la implementación de Apps Script.";
+  if(c==="server")return "La planilla respondió con un error: "+(e.detalle||"sin detalle");
+  return "Error inesperado ("+(c||"desconocido")+").";
 }
 function handleErr(e){
   if(e&&e.code==="pin"){pin="";showPin("Volvé a ingresar tu PIN.")}
-  else toast("No se pudo guardar. Revisá la conexión e intentá de nuevo.");
+  else toast(errMsg(e));
 }
 function saveLead(lead){
   const i=leads.findIndex(l=>l.id===lead.id);if(i>=0)leads[i]=lead;else leads.push(lead);render();
