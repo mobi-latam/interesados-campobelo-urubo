@@ -384,7 +384,7 @@ function bindCards(root){
 // ---------- Render
 function render(){
   const list=filtered();
-  $("#subtitle").textContent=leads.length?`${leads.length} contactos${list.length!==leads.length?` · ${list.length} con filtros`:""}`:"Todavía no hay contactos.";
+  $("#subtitle").textContent=leads.length?`${leads.length} ${leads.length===1?"contacto":"contactos"}${list.length!==leads.length?` · ${list.length} con filtros`:""}`:"Todavía no hay contactos.";
   const due=list.filter(l=>l.recontacto&&l.recontacto<=todayYmd()&&!["Vendido","Perdido"].includes(l.estado)).length;
   $("#agendaDot").hidden=!due;$("#agendaDot").textContent=due;
   if(view==="board")renderBoard(list);else if(view==="agenda")renderAgenda(list);else renderMetrics(list);
@@ -448,14 +448,28 @@ function renderEvol(list){
 
 // ---------- Data (Google Sheets)
 const newId=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
-async function api(body){
+async function apiOnce(body){
   const fail=(code,det)=>{const e=new Error(code);e.code=code;e.detalle=det||"";return e};
   if(!navigator.onLine)throw fail("offline");
-  let r;try{r=await fetch(API_URL,{method:"POST",body:JSON.stringify({...body,pin})})}catch(x){throw fail("red")}
+  let r;try{r=await fetch(API_URL,{method:"POST",body:JSON.stringify({...body,pin}),cache:"no-store"})}catch(x){throw fail("red")}
   const t=await r.text();let j;
   try{j=JSON.parse(t)}catch(x){throw fail("nojson",t.slice(0,120))}
   if(j.error)throw fail(j.error,j.detalle);
   return j;
+}
+// Pedidos de a uno (evita que Google mezcle respuestas) y reintento automático.
+// Guardar/borrar son seguros de repetir: se identifican por id.
+let apiChain=Promise.resolve();
+function api(body){
+  const run=async()=>{
+    let last;
+    for(let i=0;i<4;i++){
+      try{return await apiOnce(body)}
+      catch(e){last=e;if(!["red","nojson"].includes(e.code))throw e;await new Promise(r=>setTimeout(r,700*(i+1)))}
+    }
+    throw last;
+  };
+  const p=apiChain.then(run,run);apiChain=p.catch(()=>{});return p;
 }
 function norm(x){
   if(typeof x.historial==="string"){try{x.historial=JSON.parse(x.historial||"[]")}catch(_){x.historial=[]}}
@@ -464,7 +478,11 @@ function norm(x){
   return x;
 }
 function showPin(msg){$("#pinScreen").hidden=false;$("#pinErr").textContent=msg||"";setTimeout(()=>$("#pinInput").focus(),50)}
+let loadingNow=false;
 async function load(){
+  if(loadingNow)return;loadingNow=true;try{return await loadInner()}finally{loadingNow=false}
+}
+async function loadInner(){
   if(API_URL.startsWith("PEGA")){notice("Falta pegar la dirección de la planilla (API_URL) en el archivo index.html.");$("#subtitle").textContent="Sin configurar.";return}
   if(!pin){showPin();return}
   try{
